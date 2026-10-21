@@ -1,0 +1,421 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Staqueue Board</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+/* Layout: toolbar → rules → groups as columns (| = group divider) → fixed "hand" bar for the item currently taken out */
+:root{
+  --bg:#E9EDF0; --surface:#FFFFFF; --sunk:#DDE3E8; --ink:#16202A; --muted:#5A6672; --line:#C6CED6;
+  --stack:#9A5300; --stack-soft:#F8E7D1; --queue:#0A6964; --queue-soft:#D3EEEB;
+  --accent:#29357F; --accent-soft:#DDE1F7; --danger:#A8261D; --hit:#FFE58A;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP","Yu Gothic",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10151B; --surface:#19212A; --sunk:#0C1015; --ink:#E4E9EE; --muted:#95A1AD; --line:#2B3540;
+  --stack:#F2A452; --stack-soft:#352614; --queue:#55C8BF; --queue-soft:#11312F;
+  --accent:#A3AEFF; --accent-soft:#232A52; --danger:#FF8F84; --hit:#6B5714; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#10151B; --surface:#19212A; --sunk:#0C1015; --ink:#E4E9EE; --muted:#95A1AD; --line:#2B3540;
+  --stack:#F2A452; --stack-soft:#352614; --queue:#55C8BF; --queue-soft:#11312F;
+  --accent:#A3AEFF; --accent-soft:#232A52; --danger:#FF8F84; --hit:#6B5714; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 40px}
+body.holding{padding-bottom:230px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 12px}
+button:hover:not(:disabled){border-color:var(--ink)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button.danger{color:var(--danger);border-color:var(--danger)}
+button.ghost{border-color:transparent;background:transparent}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=text],input[type=search],select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 10px;min-width:0}
+textarea{width:100%;resize:vertical}
+.mono{font-family:var(--f-mono)}
+.wrap{max-width:1400px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+header.top{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
+.brand h1{font-family:var(--f-mono);font-size:20px;font-weight:600;margin:0;letter-spacing:-.01em}
+.brand h1 .s{color:var(--stack)} .brand h1 .q{color:var(--queue)}
+.brand small{color:var(--muted);font-size:12px}
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tools select{max-width:220px}
+#search{width:190px}
+
+details.rules{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+details.rules summary{cursor:pointer;font-weight:700}
+details.rules summary .pname{font-weight:500;color:var(--muted);margin-left:6px}
+.rulegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 20px;margin-top:10px}
+.rulegrid h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 2px;font-family:var(--f-mono);font-weight:500}
+.rulegrid ul{margin:0;padding-left:1.1em;font-size:14px}
+.principle{font-size:13px;color:var(--muted);margin:10px 0 0;max-width:80ch}
+
+.board{display:flex;flex-wrap:wrap;align-items:flex-start;gap:0}
+.group{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1 1 260px;max-width:420px;padding:0 14px;position:relative}
+.group+.group{border-left:2px solid var(--line)}
+.group:first-child{padding-left:0}
+.glabel{font-family:var(--f-mono);font-size:11px;color:var(--muted);letter-spacing:.06em}
+
+.sq{background:var(--surface);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-width:0}
+.sq-head{display:flex;align-items:center;gap:8px;padding:9px 12px 7px;border-bottom:1px solid var(--line)}
+.sq-name{font-family:var(--f-mono);font-weight:600;font-size:14px;min-width:0;overflow-wrap:anywhere;margin-right:auto}
+.kind{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;padding:1px 7px;border-radius:99px;white-space:nowrap}
+.kind.stack{background:var(--stack-soft);color:var(--stack)}
+.kind.queue{background:var(--queue-soft);color:var(--queue)}
+.count{font-family:var(--f-mono);font-size:13px;font-variant-numeric:tabular-nums;color:var(--muted);min-width:2ch;text-align:right}
+.count.big{color:var(--ink);font-weight:600}
+
+.next{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.next .lbl{font-family:var(--f-mono);font-size:10.5px;color:var(--muted);letter-spacing:.05em}
+.sq.stack .next .lbl{color:var(--stack)} .sq.queue .next .lbl{color:var(--queue)}
+.next .txt{font-weight:500;white-space:pre-wrap;overflow-wrap:anywhere}
+.next .empty{color:var(--muted);font-size:14px}
+.next-row{display:flex;gap:8px;align-items:flex-start;justify-content:space-between}
+.next-row .meta{flex:none}
+.age{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.age.old{color:var(--danger)}
+.take{align-self:flex-start}
+
+.peek{border-top:1px dashed var(--line)}
+.peek>button{width:100%;text-align:left;border:0;border-radius:0 0 8px 8px;background:transparent;font-size:13px;color:var(--muted);padding:6px 12px}
+.peek ol{list-style:none;margin:0;padding:0 12px 10px;display:flex;flex-direction:column;gap:4px}
+.peek li{display:flex;gap:8px;justify-content:space-between;font-size:13.5px;padding:4px 8px;border-radius:4px;background:var(--sunk)}
+.peek li span.t{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+.peek li .pos{font-family:var(--f-mono);font-size:11px;color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
+.peek .end{font-family:var(--f-mono);font-size:10.5px;color:var(--muted);padding:2px 8px}
+mark{background:var(--hit);color:inherit;border-radius:2px}
+
+.add{display:flex;gap:6px;padding:8px 12px 10px;border-top:1px solid var(--line)}
+.add input{flex:1}
+.add button{flex:none}
+
+.hand{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:2px solid var(--ink);
+  padding:12px max(16px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));box-shadow:0 -8px 24px rgba(0,0,0,.12)}
+.hand-in{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:12px 24px;align-items:start}
+.hand h2{font-size:12px;font-family:var(--f-mono);letter-spacing:.06em;margin:0 0 4px;color:var(--muted);font-weight:500}
+.hand .htxt{font-size:17px;font-weight:700;white-space:pre-wrap;overflow-wrap:anywhere}
+.hand .hmeta{font-size:12.5px;color:var(--muted);font-family:var(--f-mono)}
+.choices{display:flex;flex-direction:column;gap:8px}
+.choice-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.choice-row select{flex:1;min-width:150px}
+.or{font-size:12px;color:var(--muted)}
+.hand textarea{min-height:38px}
+.hint{font-size:12px;color:var(--muted)}
+@media (max-width:720px){.hand-in{grid-template-columns:minmax(0,1fr)} .group{padding:0;max-width:none;flex-basis:100%} .group+.group{border-left:0;border-top:2px solid var(--line);padding-top:12px;margin-top:12px} #search{width:100%} .tools{width:100%}}
+
+details.log{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px}
+details.log summary{cursor:pointer;font-weight:700}
+.log ol{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:2px;max-height:320px;overflow:auto}
+.log li{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:10px;font-size:13.5px;padding:3px 0;border-bottom:1px solid var(--line)}
+.log li .when,.log li .from{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+
+.overlay{position:fixed;inset:0;z-index:40;background:rgba(10,14,20,.45);display:flex;align-items:flex-start;justify-content:center;overflow:auto;
+  padding:max(24px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 24px max(16px,env(safe-area-inset-left,0px))}
+.dlg{background:var(--surface);border:1px solid var(--line);border-radius:10px;width:min(760px,100%);padding:18px 20px;display:flex;flex-direction:column;gap:12px}
+.dlg h2{margin:0;font-size:18px}
+.dlg .row{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.dlg label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.dlg pre{margin:0;font-family:var(--f-mono);font-size:12.5px;background:var(--sunk);padding:10px;border-radius:6px;overflow-x:auto}
+.tpls{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
+.tpls label{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:14px;cursor:pointer}
+.tpls label:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.err{color:var(--danger);font-size:13.5px;white-space:pre-wrap}
+.toast{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:7px 14px;border-radius:6px;font-size:14px;z-index:50}
+.note{font-size:13px;color:var(--muted);margin:0}
+@media (prefers-reduced-motion:no-preference){.sq{transition:border-color .15s}}
+.sq.src{border-color:var(--ink)}
+</style>
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style></head><body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1><span class="s">Sta</span><span class="q">queue</span> Board</h1><small>スタックとキューで情報管理</small></div>
+    <div class="tools">
+      <select id="ws" aria-label="ボードを選ぶ"></select>
+      <button id="btnNew">新規ボード</button>
+      <button id="btnLayout">構成を編集</button>
+      <input id="search" type="search" placeholder="検索（閲覧のみ）" aria-label="検索">
+      <button id="btnUndo" title="直前の操作を取り消す">元に戻す</button>
+      <button id="btnData">データ</button>
+    </div>
+  </header>
+
+  <details class="rules" id="rules"></details>
+  <main class="board" id="board"></main>
+  <details class="log" id="log"></details>
+</div>
+<div class="hand" id="hand" hidden></div>
+<div class="overlay" id="overlay" hidden><div class="dlg" id="dlg" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const KEY='staqueue-board-v1';
+const DAY=86400000;
+const TEMPLATES=[
+ {key:'fifo',name:'FIFO ドリブン',layout:'queue-main\nqueue-temp1\nqueue-temp2',
+  proc:['queue-main を処理する'],add:['queue-main に追加する'],move:['ランダムアクセスや順序の入れ替えをしたいときだけ queue-temp を使う（本数は少ないほど良い）']},
+ {key:'guard',name:'ガードスタック',layout:'stack1 | queue1',
+  proc:['stack1 を優先し、空になるまで処理する','stack1 が空なら queue1 を処理する'],add:['普段は queue1 に追加する','割り込みは stack1 に追加する'],move:['なし']},
+ {key:'category',name:'カテゴリー',layout:'queue-entrance | queue1\n                 queue2\n                 queue3',
+  proc:['queueXX を処理する'],add:['queue-entrance に追加する'],move:['queue-entrance から適切な queueXX に移す','queue-entrance は空にするよう心がける']},
+ {key:'later',name:'レイター',layout:'queue-main | stack-later',
+  proc:['queue-main を処理する'],add:['queue-main に追加する'],move:['あとでやりたいものは stack-later へ移す','やるときは stack-later から queue-main へ戻す']},
+ {key:'project',name:'プロジェクト',layout:'stack-inbox | queue-inbox | stack-projectA\n                            queue-projectB\n                            stack-projectC+queue-projectC',
+  proc:['stack-inbox を最優先で、空になるまで処理する','各プロジェクトのスタッキューは、その活動をするときに処理する'],add:['割り込みは stack-inbox に追加する','通常は queue-inbox に追加する'],move:['queue-inbox から各プロジェクトのスタッキューに移す','プロジェクト側は「スタックのみ / キューのみ / 一本ずつ」まで']},
+ {key:'defer',name:'先送り',layout:'(Group1)   (Group2)\n\nqueue1   | stack-immediately\n           queue-1hour\n           queue-3hour\n           queue-day\n           queue-tomorrow\n           queue-3day\n           queue-next-week',
+  proc:['グループ 2 のスタッキューを処理する'],add:['queue1 に追加する'],move:['queue1 から、どこまで先送りしてよいかを判断してグループ 2 に移す','グループ 2 は 7 本以内、できるだけ少なく']},
+ {key:'visual',name:'先送りの可視化',layout:'queue-distributor | queue-0\n                    queue-1\n                    queue-2\n                    queue-3\n                    queue-long',
+  proc:['queue-XX を処理する'],add:['queue-distributor に追加する（タイムスタンプは自動で付きます）'],move:['queue-distributor から queue-0 へ移す','処理できなければ経過日数を見て入れ直す：1 日 → queue-1、2 日 → queue-2、3 日 → queue-3、それ以上 → queue-long']},
+ {key:'phase',name:'フェーズ',layout:'queue-inbox | queue-phase1 | queue-phase2 | queue-phase3\nqueue-NA',
+  proc:['queue-phaseXX を処理する'],add:['queue-inbox に追加する'],move:['必要に応じて queue-inbox から queue-phase1 に移す','そのフェーズにふさわしくなければ次のフェーズへ','ふさわしいが今は処理できなければ入れ直す','最後のフェーズでも当てはまらなければ queue-NA へ（溜まるほど危険信号）']},
+ {key:'cushion',name:'クッション',layout:'queue-inbox | stack-sleep | queue-sleep',
+  proc:['queue-sleep から取り出し「本当にやるか？」を自問してから処理する'],add:['すぐ出したいが寝かせるべきものを queue-inbox に追加する'],move:['queue-inbox から stack-sleep へ移す','時間を空けて stack-sleep を確認し queue-sleep へ移す（追加と同じタイミングで確認しない）']},
+ {key:'gtd',name:'GTD',layout:'queue-inbox | queue-someday    | queue-projects | queue-nextactions\n              queue-documents    queue-calendar\n              queue-recyclebin   queue-waiting',
+  proc:['queue-nextactions を随時・高頻度に処理する','queue-calendar は予定をすっぽかさない頻度で処理し、カレンダーへ登録する','queue-documents は溜まらない程度に処理し、資料を所定の場所へ'],add:['queue-inbox に追加する','queue-projects を眺めて思いついたら queue-nextactions に追加する'],move:['inbox から仕分ける：いつか→someday／資料→documents／不要→recyclebin／すぐ行動でき切りがよい→nextactions／それ以外→projects／予定→calendar／相手待ち→waiting','プロジェクトは終了・中止まで queue-projects に入れ直す']},
+ {key:'polling',name:'スリーポーリング',layout:'queue-polling1\nqueue-polling2\nqueue-polling3',
+  proc:['queue-pollingXX を処理する'],add:['働きかけたいが捕まるとは限らないものを queue-polling1 に追加する'],move:['試みてダメなら次の番号へ移す','queue-polling3 でもダメなら「処理して消す」で諦める']},
+ {key:'register',name:'レジ待ち',layout:'queue1\nqueue2\nqueue3',
+  proc:['queueXX を処理する'],add:['依頼者が全キューを眺め、並ぶキューを選んで追加する'],move:['なし']},
+ {key:'assign',name:'アサイン',layout:'queue-inbox | stack-member1\n              stack-member2\n              stack-member3',
+  proc:['各メンバーが自分の stack-memberXX を処理する'],add:['マネージャーかメンバーが queue-inbox に追加する'],move:['マネージャーが queue-inbox から stack-memberXX に移す','スタックの底に溜まるならアサインの仕方を見直す']},
+ {key:'take',name:'テイク',layout:'queue-inbox | stack-member1\n              stack-member2\n              stack-member3',
+  proc:['各メンバーが自分の stack-memberXX を処理する'],add:['マネージャーかメンバーが queue-inbox に追加する'],move:['メンバーが自分で queue-inbox から自分のスタックへ移す','処理できそうにないときは、取り出した直後に限り queue-inbox へ戻す']},
+ {key:'custom',name:'カスタム（白紙）',layout:'stack1 | queue1',proc:[],add:[],move:[]},
+];
+const tpl=k=>TEMPLATES.find(t=>t.key===k)||TEMPLATES[TEMPLATES.length-1];
+
+// ---------- layout parser ----------
+function parseLayout(text){
+  const lines=text.replace(/\t/g,'    ').split('\n');
+  let bounds=null; const found=[]; const errs=[];
+  const push=(tok,g)=>{
+    if(/^\(.*\)$/.test(tok)||/^(\.\.\.|…|or)$/i.test(tok))return;
+    tok.split('+').filter(Boolean).forEach(name=>{
+      const kind=/^stack/i.test(name)?'stack':/^queue/i.test(name)?'queue':null;
+      if(!kind){errs.push(`「${name}」: 名前は stack か queue で始めてください`);return;}
+      found.push({name,kind,g});
+    });
+  };
+  lines.forEach(line=>{
+    if(!line.trim())return;
+    if(line.includes('|')){
+      const pos=[];for(let i=0;i<line.length;i++)if(line[i]==='|')pos.push(i);
+      if(!bounds)bounds=pos;
+      line.split('|').forEach((seg,gi)=>seg.split(/\s+/).filter(Boolean).forEach(t=>push(t,gi)));
+    }else{
+      const re=/\S+/g;let m;
+      while((m=re.exec(line))){const g=bounds?bounds.filter(p=>p<m.index).length:0;push(m[0],g);}
+    }
+  });
+  const seen=new Set();
+  found.forEach(f=>{if(seen.has(f.name))errs.push(`「${f.name}」が重複しています`);seen.add(f.name);});
+  if(!found.length&&!errs.length)errs.push('スタッキューが 1 本もありません');
+  const gmap=new Map();
+  found.forEach(f=>{if(!gmap.has(f.g))gmap.set(f.g,[]);gmap.get(f.g).push({name:f.name,kind:f.kind});});
+  const groups=[...gmap.keys()].sort((a,b)=>a-b).map(k=>gmap.get(k));
+  return {groups,list:found,errs};
+}
+
+// ---------- state ----------
+const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);
+function newWorkspace(name,patternKey,layout){
+  const p=parseLayout(layout);const items={};p.list.forEach(s=>items[s.name]=[]);
+  return {id:uid(),name,pattern:patternKey,layout,items,hand:null,log:[]};
+}
+function seed(){
+  const ws=newWorkspace('サンプル（ガードスタック）','guard','stack1 | queue1');
+  const now=Date.now();
+  const it=(t,d)=>({id:uid(),text:t,created:now-d*DAY});
+  ws.items.queue1=[it('（例）週報を書く',3),it('（例）経費精算を出す',2),it('（例）あとで読む: テスト設計の記事',1),it('（例）来月の勉強会の候補日を決める',0)];
+  ws.items.stack1=[it('（例）至急: 見積書の数字を確認して返信',0)];
+  return {v:1,current:ws.id,workspaces:[ws]};
+}
+let S;
+try{S=JSON.parse(localStorage.getItem(KEY));}catch(e){S=null}
+if(!S||!Array.isArray(S.workspaces)||!S.workspaces.length)S=seed();
+let storageOK=true;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){if(storageOK){storageOK=false;toast('このブラウザでは保存できません。「データ」から書き出してください');}}}
+const W=()=>S.workspaces.find(w=>w.id===S.current)||S.workspaces[0];
+const undoStack=[];
+function mutate(fn){undoStack.push(JSON.stringify(S));if(undoStack.length>60)undoStack.shift();fn();save();render();}
+
+// ---------- helpers ----------
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let query='';
+function hl(text){
+  const e=esc(text);if(!query)return e;
+  const q=esc(query).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  return e.replace(new RegExp(q,'gi'),m=>`<mark>${m}</mark>`);
+}
+const hit=t=>query&&t.toLowerCase().includes(query.toLowerCase());
+function days(ts){const a=new Date(ts);a.setHours(0,0,0,0);const b=new Date();b.setHours(0,0,0,0);return Math.round((b-a)/DAY);}
+function ageLabel(ts){const d=days(ts);return d<=0?'今日':d+'日前';}
+function fmt(ts){const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
+function nextOut(arr,kind){return kind==='stack'?arr[arr.length-1]:arr[0];}
+function ordered(arr,kind){return kind==='stack'?[...arr].reverse():arr;}
+let toastT;function toast(m){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>t.hidden=true,2200);}
+const open=new Set();
+
+// ---------- render ----------
+function render(){
+  const w=W();
+  const p=parseLayout(w.layout);
+  $('#ws').innerHTML=S.workspaces.map(x=>`<option value="${x.id}"${x.id===w.id?' selected':''}>${esc(x.name)}</option>`).join('');
+  // rules
+  const t=tpl(w.pattern);
+  const li=a=>a.length?a.map(x=>`<li>${esc(x)}</li>`).join(''):'<li>（自由に決めてください）</li>';
+  $('#rules').innerHTML=`<summary>運用ルール<span class="pname">${esc(t.name)}パターン</span></summary>
+   <div class="rulegrid"><div><h3>処理</h3><ul>${li(t.proc)}</ul></div><div><h3>追加</h3><ul>${li(t.add)}</ul></div><div><h3>移動</h3><ul>${li(t.move)}</ul></div></div>
+   <p class="principle">取り出せるのは先頭だけ（スタックは最後に入れたもの、キューは最初に入れたもの）。取り出した情報は「処理して消す」か「処理せず移動する」のどちらか一方で、編集できるのは移動するときだけです。中身の閲覧と検索はいつでもできます。</p>`;
+  // board
+  const holding=!!w.hand;
+  $('#board').innerHTML=p.groups.map((g,gi)=>`<section class="group" aria-label="グループ ${gi+1}">${p.groups.length>1?`<div class="glabel">GROUP ${gi+1}</div>`:''}${g.map(s=>card(w,s,holding)).join('')}</section>`).join('');
+  // log
+  $('#log').innerHTML=`<summary>処理済み <span class="mono">(${w.log.length})</span></summary>`+(w.log.length?`<ol>${w.log.slice(0,300).map(l=>`<li><span class="when">${fmt(l.at)}</span><span class="from">${esc(l.from)}</span><span>${hl(l.text)}</span></li>`).join('')}</ol>`:'<p class="note">まだありません。取り出して「処理して消す」と、ここに記録されます。</p>');
+  renderHand(w,p);
+  $('#btnUndo').disabled=!undoStack.length;
+  document.body.classList.toggle('holding',holding);
+}
+function card(w,s,holding){
+  const arr=w.items[s.name]||[];
+  const nx=nextOut(arr,s.kind);
+  const rest=ordered(arr,s.kind).slice(1);
+  const hits=arr.filter(i=>hit(i.text)).length;
+  const isOpen=open.has(s.name)||(query&&rest.some(i=>hit(i.text)));
+  const src=w.hand&&w.hand.from===s.name;
+  const lbl=s.kind==='stack'?'TOP ▲ 次に出る（最後に入れたもの）':'FRONT ◀ 次に出る（最初に入れたもの）';
+  const old=nx&&days(nx.created)>=3;
+  return `<article class="sq ${s.kind}${src?' src':''}" data-name="${esc(s.name)}">
+   <div class="sq-head"><span class="sq-name">${esc(s.name)}</span><span class="kind ${s.kind}">${s.kind==='stack'?'STACK · LIFO':'QUEUE · FIFO'}</span><span class="count${arr.length?' big':''}" title="件数">${arr.length}</span></div>
+   <div class="next">${nx?`<div class="lbl">${lbl}</div>
+     <div class="next-row"><div class="txt">${hl(nx.text)}</div><span class="age${old?' old':''}" title="追加: ${fmt(nx.created)}">${ageLabel(nx.created)}</span></div>
+     <button class="take primary" data-act="take" ${holding?'disabled title="手元の情報を先に片付けてください"':''}>取り出す</button>`
+     :`<div class="empty">空です</div>`}</div>
+   ${rest.length?`<div class="peek"><button data-act="peek" aria-expanded="${isOpen}">${isOpen?'▾':'▸'} 後ろに ${rest.length} 件${hits&&query?` · 一致 ${hits}`:''}（閲覧のみ）</button>
+     ${isOpen?`<ol>${rest.map((i,k)=>`<li><span class="t">${hl(i.text)}</span><span class="pos">${k+2}番目 · ${ageLabel(i.created)}</span></li>`).join('')}<li class="end" style="background:none">${s.kind==='stack'?'▼ BOTTOM（底）':'▶ 末尾（次の追加はここ）'}</li></ol>`:''}</div>`:''}
+   <form class="add" data-act="add"><input type="text" id="add-${esc(s.name)}" placeholder="${s.kind==='stack'?'上に積む':'末尾に並べる'}" aria-label="${esc(s.name)} に追加" autocomplete="off"><button type="submit">追加</button></form>
+  </article>`;
+}
+function renderHand(w,p){
+  const h=$('#hand');
+  if(!w.hand){h.hidden=true;h.innerHTML='';return;}
+  const it=w.hand.item;
+  const opts=p.list.map(s=>`<option value="${esc(s.name)}">${esc(s.name)}${s.name===w.hand.from?'（入れ直す）':''}</option>`).join('');
+  const d=days(it.created);
+  h.hidden=false;
+  h.innerHTML=`<div class="hand-in">
+    <div><h2>手元にある情報 · ${esc(w.hand.from)} から取り出し</h2><div class="htxt">${esc(it.text)}</div>
+      <div class="hmeta">追加 ${fmt(it.created)}（${d<=0?'今日':d+'日経過'}）</div></div>
+    <div class="choices">
+      <div class="choice-row"><button class="primary" id="hDone">処理して消す</button><span class="or">または、処理せずに移動 ↓</span></div>
+      <div class="choice-row"><select id="hDest" aria-label="移動先"><option value="">移動先を選ぶ…</option>${opts}</select><button id="hMove" disabled>移動する</button></div>
+      <textarea id="hText" rows="2" disabled aria-label="移動時の編集">${esc(it.text)}</textarea>
+      <span class="hint">編集は移動するときだけできます。</span>
+    </div></div>`;
+  const dest=$('#hDest'),txt=$('#hText'),mv=$('#hMove');
+  dest.onchange=()=>{const on=!!dest.value;txt.disabled=!on;mv.disabled=!on;};
+  $('#hDone').onclick=()=>mutate(()=>{const w=W();w.log.unshift({text:it.text,from:w.hand.from,at:Date.now(),created:it.created});if(w.log.length>1000)w.log.length=1000;w.hand=null;toast('処理済みにしました');});
+  mv.onclick=()=>{const to=dest.value;const nt=txt.value.trim()||it.text;mutate(()=>{const w=W();const item={...w.hand.item,text:nt,moved:Date.now()};(w.items[to]=w.items[to]||[]).push(item);w.hand=null;});toast(`${to} に移動しました`);};
+}
+
+// ---------- board events ----------
+$('#board').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-act]');if(!b)return;
+  const name=b.closest('.sq').dataset.name;
+  if(b.dataset.act==='peek'){open.has(name)?open.delete(name):open.add(name);render();return;}
+  if(b.dataset.act==='take'){
+    mutate(()=>{const w=W();if(w.hand)return;const s=parseLayout(w.layout).list.find(x=>x.name===name);const arr=w.items[name];if(!arr||!arr.length)return;
+      const item=s.kind==='stack'?arr.pop():arr.shift();w.hand={item,from:name,at:Date.now()};});
+    setTimeout(()=>{const d=$('#hDone');d&&d.focus();},0);
+  }
+});
+$('#board').addEventListener('submit',e=>{
+  e.preventDefault();const f=e.target;const inp=f.querySelector('input');const v=inp.value.trim();if(!v)return;
+  const name=f.closest('.sq').dataset.name;
+  mutate(()=>{const w=W();(w.items[name]=w.items[name]||[]).push({id:uid(),text:v,created:Date.now()});});
+  const again=document.getElementById(inp.id);again&&again.focus();
+});
+$('#search').addEventListener('input',e=>{query=e.target.value.trim();render();});
+$('#ws').addEventListener('change',e=>{S.current=e.target.value;save();open.clear();render();});
+$('#btnUndo').onclick=()=>{const prev=undoStack.pop();if(!prev)return;S=JSON.parse(prev);save();render();toast('元に戻しました');};
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#overlay').hidden)closeDlg();});
+
+// ---------- dialogs ----------
+function dlg(html){$('#dlg').innerHTML=html;$('#overlay').hidden=false;const f=$('#dlg').querySelector('input,textarea,select,button');f&&f.focus();}
+function closeDlg(){$('#overlay').hidden=true;$('#dlg').innerHTML='';}
+$('#overlay').addEventListener('click',e=>{if(e.target.id==='overlay'||e.target.closest('[data-close]'))closeDlg();});
+
+$('#btnNew').onclick=()=>{
+  dlg(`<h2>新しいボード</h2>
+   <label class="f">ボード名<input type="text" id="nName" value="" placeholder="例: 仕事用"></label>
+   <div class="f" style="font-size:13px;color:var(--muted)">パターン</div>
+   <div class="tpls">${TEMPLATES.map((t,i)=>`<label><input type="radio" name="tp" value="${t.key}"${i===0?' checked':''}>${esc(t.name)}</label>`).join('')}</div>
+   <label class="f">構成（あとで編集できます）<textarea id="nLayout" rows="7" class="mono" spellcheck="false">${esc(TEMPLATES[0].layout)}</textarea></label>
+   <div class="err" id="nErr"></div>
+   <div class="row"><button data-close>キャンセル</button><button class="primary" id="nOk">作成</button></div>`);
+  $('#dlg').querySelectorAll('input[name=tp]').forEach(r=>r.onchange=()=>{$('#nLayout').value=tpl(r.value).layout;});
+  $('#nOk').onclick=()=>{
+    const key=$('#dlg').querySelector('input[name=tp]:checked').value;const layout=$('#nLayout').value;
+    const p=parseLayout(layout);if(p.errs.length){$('#nErr').textContent=p.errs.join('\n');return;}
+    const name=$('#nName').value.trim()||tpl(key).name;
+    mutate(()=>{const w=newWorkspace(name,key,layout);S.workspaces.push(w);S.current=w.id;});
+    open.clear();closeDlg();
+  };
+};
+
+$('#btnLayout').onclick=()=>{
+  const w=W();
+  dlg(`<h2>構成を編集 · ${esc(w.name)}</h2>
+   <p class="note">1 行ずつ書き、<span class="mono">|</span> でグループを区切ります。名前が <span class="mono">stack</span> で始まればスタック、<span class="mono">queue</span> で始まればキューです。<span class="mono">|</span> のない行は、上の行の <span class="mono">|</span> の位置にそろえた列のグループに入ります。<span class="mono">a+b</span> は 2 本として扱い、<span class="mono">(Group1)</span> や <span class="mono">...</span> は無視します。</p>
+   <label class="f">ボード名<input type="text" id="eName" value="${esc(w.name)}"></label>
+   <label class="f">パターン（運用ルールの表示）<select id="ePat">${TEMPLATES.map(t=>`<option value="${t.key}"${t.key===w.pattern?' selected':''}>${esc(t.name)}</option>`).join('')}</select></label>
+   <label class="f">構成<textarea id="eLayout" rows="9" class="mono" spellcheck="false">${esc(w.layout)}</textarea></label>
+   <div class="err" id="eErr"></div>
+   <div class="row" style="justify-content:space-between"><button class="danger" id="eDel">このボードを削除</button><span style="display:flex;gap:8px"><button data-close>キャンセル</button><button class="primary" id="eOk">保存</button></span></div>`);
+  $('#eOk').onclick=()=>{
+    const layout=$('#eLayout').value;const p=parseLayout(layout);
+    const errs=[...p.errs];const names=new Set(p.list.map(s=>s.name));
+    Object.entries(w.items).forEach(([n,a])=>{if(a.length&&!names.has(n))errs.push(`「${n}」に ${a.length} 件残っています。先に移動するか処理してから外してください`);});
+    if(w.hand&&!names.has(w.hand.from)){} // hand can still move anywhere
+    if(errs.length){$('#eErr').textContent=errs.join('\n');return;}
+    mutate(()=>{const x=W();x.name=$('#eName').value.trim()||x.name;x.pattern=$('#ePat').value;x.layout=layout;
+      const items={};p.list.forEach(s=>items[s.name]=x.items[s.name]||[]);x.items=items;});
+    closeDlg();toast('構成を保存しました');
+  };
+  $('#eDel').onclick=()=>{
+    const n=Object.values(w.items).reduce((a,b)=>a+b.length,0)+(w.hand?1:0);
+    $('#dlg').querySelector('.row').innerHTML=`<span class="err" style="margin-right:auto">「${esc(w.name)}」と中の ${n} 件を削除します。元に戻すボタンで復元できます。</span><button data-close>やめる</button><button class="danger" id="eDel2">削除する</button>`;
+    $('#eDel2').onclick=()=>{mutate(()=>{S.workspaces=S.workspaces.filter(x=>x.id!==w.id);if(!S.workspaces.length){const s=seed();S.workspaces=s.workspaces;}S.current=S.workspaces[0].id;});closeDlg();};
+  };
+};
+
+$('#btnData').onclick=()=>{
+  const json=JSON.stringify(S,null,1);
+  dlg(`<h2>データ</h2>
+   <p class="note">データはこのブラウザにだけ保存されています。別の端末へ移すときや控えを取るときは、書き出したテキストを保存してください。</p>
+   <label class="f">書き出し（全ボード）<textarea id="dOut" rows="7" class="mono" readonly>${esc(json)}</textarea></label>
+   <div class="row"><button id="dCopy">コピー</button><button id="dSave">ファイルとして保存</button></div>
+   <label class="f">読み込み（貼り付けるか、ファイルを選ぶ）<textarea id="dIn" rows="5" class="mono" placeholder="書き出したテキストを貼り付け"></textarea></label>
+   <input type="file" id="dFile" accept=".json,application/json,text/plain">
+   <div class="err" id="dErr"></div>
+   <div class="row"><button data-close>閉じる</button><button class="danger" id="dLoad">読み込んで置き換える</button></div>`);
+  $('#dCopy').onclick=()=>{const t=$('#dOut');navigator.clipboard?.writeText(json).then(()=>toast('コピーしました'),()=>{t.select();toast('選択しました。Ctrl+C でコピーしてください');})??(t.select());};
+  $('#dSave').onclick=()=>{try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([json],{type:'application/json'}));a.download='staqueue-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();a.remove();}catch(e){toast('保存できませんでした。コピーを使ってください');}};
+  $('#dFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{$('#dIn').value=r.result;};r.readAsText(f);};
+  $('#dLoad').onclick=()=>{
+    let d;try{d=JSON.parse($('#dIn').value);}catch(e){$('#dErr').textContent='JSON として読めませんでした';return;}
+    if(!d||!Array.isArray(d.workspaces)||!d.workspaces.length){$('#dErr').textContent='ボードが含まれていません';return;}
+    mutate(()=>{S=d;if(!S.workspaces.some(w=>w.id===S.current))S.current=S.workspaces[0].id;});closeDlg();toast('読み込みました（元に戻すで取り消せます）');
+  };
+};
+
+render();
+</script>
+</body></html>
